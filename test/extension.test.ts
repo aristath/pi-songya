@@ -335,7 +335,7 @@ test("Pi SDK loads the standalone extension without a session or provider reques
     agentDir: agent,
     settingsManager: SettingsManager.inMemory({}),
     noExtensions: true,
-    additionalExtensionPaths: [join(import.meta.dirname, "../src/index.ts")],
+    additionalExtensionPaths: [join(import.meta.dirname, "..")],
     disabledBuiltinExtensions: ["mcp"],
     noSkills: true,
     noPromptTemplates: true,
@@ -345,6 +345,7 @@ test("Pi SDK loads the standalone extension without a session or provider reques
   await loader.reload();
   const result = loader.getExtensions();
   assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings ?? [], []);
   assert.equal(result.extensions.length, 1);
   assert.equal(result.extensions[0].tools.size, 22);
 });
