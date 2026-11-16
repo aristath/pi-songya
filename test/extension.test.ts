@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -14,8 +15,8 @@ import type {
 async function fixture(invoke?: Invoke) {
   const dir = await mkdtemp(join(tmpdir(), "pi-songya-extension-"));
   await writeFile(
-    join(dir, "songya.json"),
-    JSON.stringify({ store: join(dir, "store"), user: "user-1" }),
+    join(dir, "settings.json"),
+    JSON.stringify({ songya: { store: join(dir, "store"), user: "user-1" } }),
   );
   const tools = new Map<string, any>();
   const handlers = new Map<string, any>();
@@ -60,6 +61,7 @@ async function fixture(invoke?: Invoke) {
     return { data: { status: "committed", id: "m_saved" } };
   });
   const pi = {
+    getSettings: () => JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")),
     on: (name: string, handler: any) => handlers.set(name, handler),
     registerTool: (tool: any) => tools.set(tool.name, tool),
     registerCommand: (name: string, command: any) =>
@@ -189,12 +191,12 @@ test("recall is hidden context, never a conversation utterance, and off leaves t
 test("configured agent ownership applies to recall, preview and model guidance", async () => {
   const f = await fixture();
   await writeFile(
-    join(f.dir, "songya.json"),
-    JSON.stringify({
+    join(f.dir, "settings.json"),
+    JSON.stringify({ songya: {
       store: join(f.dir, "store"),
       user: "user-1",
       agentUser: "assistant",
-    }),
+    } }),
   );
   const message = question("Example subject");
   f.add(message);

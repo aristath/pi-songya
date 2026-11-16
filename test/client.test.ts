@@ -32,16 +32,16 @@ const temporary = () => mkdtemp(join(tmpdir(), "pi-songya-client-"));
 test("configuration and forgiving number normalization do not alter source wording", async () => {
   const dir = await temporary();
   await writeFile(
-    join(dir, "songya.json"),
-    JSON.stringify({
+    join(dir, "settings.json"),
+    JSON.stringify({ songya: {
       store: "./memory",
       user: "user-1",
       agentUser: " assistant ",
       roots: { letters: "./letters" },
       recallEnabled: false,
-    }),
+    } }),
   );
-  const loaded = await loadConfig(dir);
+  const loaded = await loadConfig(dir, dir);
   assert.equal(loaded.store, join(dir, "memory"));
   assert.equal(loaded.roots.letters, join(dir, "letters"));
   assert.equal(loaded.recallEnabled, false);

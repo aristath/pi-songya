@@ -15,15 +15,17 @@ npm run build
 pi install /absolute/path/to/pi-songya
 ```
 
-Create `<Pi agent directory>/songya.json`, normally `~/.pi/agent/songya.json`:
+Add `songya` to the project’s `.pi/settings.json` (or Pi’s global `settings.json` for shared defaults):
 
 ```json
 {
-  "store": "/absolute/path/to/songya/store",
-  "user": "user-1",
-  "agentUser": "agent",
-  "recallEnabled": true,
-  "adminUrl": "http://127.0.0.1:8664"
+  "songya": {
+    "store": "/absolute/path/to/songya/store",
+    "user": "user-1",
+    "agentUser": "agent",
+    "recallEnabled": true,
+    "adminUrl": "http://127.0.0.1:8664"
+  }
 }
 ```
 
@@ -34,7 +36,7 @@ renaming or moving data. Configuration is local and is not included in this pack
 
 Optional `config` selects Songya's embedding and retrieval settings; otherwise
 Songya uses `<store>/config.json`. Optional `roots` maps import names to permitted
-source directories. Relative paths resolve against the Pi agent directory; `~`
+source directories. Relative paths resolve against the session working directory; `~`
 expands to the home directory. Pi must run where the store is accessible,
 including when connecting over SSH. Configuration does not use environment variables.
 

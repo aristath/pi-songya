@@ -95,6 +95,10 @@ export function createExtension(deps: Dependencies = {}) {
   return function songya(pi: ExtensionAPI) {
     const agentDir = deps.agentDir ?? getAgentDir();
     const client = deps.client ?? new Client(agentDir);
+    async function configuration(ctx: ExtensionContext) {
+      const config = await loadConfig(agentDir, ctx.cwd, pi.getSettings());
+      return config;
+    }
     let cache: Cache | undefined;
     let lastMessages: Message[] = [];
     let warming:
@@ -112,7 +116,7 @@ export function createExtension(deps: Dependencies = {}) {
       warming = undefined;
     };
     async function current(ctx: ExtensionContext): Promise<Cache> {
-      const global = await loadConfig(agentDir);
+      const global = await configuration(ctx);
       const pref = preferences(ctx);
       const config = { ...global, ...pref };
       const scope = scopeOf(config, ctx.sessionManager.getSessionId());
@@ -437,7 +441,7 @@ export function createExtension(deps: Dependencies = {}) {
               "Use /songya [status|on|off|user <id>|reset|recover|preview <text>|admin].",
             );
           ctx.ui.notify(
-            `Songya user: ${selected.config.user}\nStore: ${selected.config.store}\nAutomatic recall: ${selected.config.recallEnabled ? "on" : "off"}\nConfiguration: ${join(agentDir, "songya.json")}\nAdministration: ${selected.config.adminUrl}`,
+            `Songya user: ${selected.config.user}\nStore: ${selected.config.store}\nAutomatic recall: ${selected.config.recallEnabled ? "on" : "off"}\nConfiguration: ${join(ctx.cwd, ".pi", "settings.json")}\nAdministration: ${selected.config.adminUrl}`,
             "info",
           );
         } catch (error) {

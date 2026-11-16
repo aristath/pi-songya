@@ -1,3 +1,4 @@
+import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -50,14 +51,9 @@ const expand = (path: string, base: string) =>
         : path,
   );
 
-export async function loadConfig(agentDir: string): Promise<Config> {
-  const path = join(agentDir, "songya.json");
-  let raw: any;
-  try {
-    raw = JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    throw new Error(`Configure Songya in ${path}: ${(error as Error).message}`);
-  }
+export async function loadConfig(agentDir: string, cwd = process.cwd(), settings?: Record<string, any>): Promise<Config> {
+  const path = join(cwd, ".pi", "settings.json");
+  const raw = (settings ?? SettingsManager.create(cwd, agentDir, { projectTrusted: true }).getSettings() as any).songya;
   if (
     !raw ||
     typeof raw.store !== "string" ||
@@ -76,10 +72,10 @@ export async function loadConfig(agentDir: string): Promise<Config> {
   for (const [name, pathValue] of Object.entries(raw.roots ?? {})) {
     if (typeof pathValue !== "string")
       throw new Error(`Import root ${name} needs a path.`);
-    roots[name] = expand(pathValue, agentDir);
+    roots[name] = expand(pathValue, cwd);
   }
   return {
-    store: expand(raw.store.trim(), agentDir),
+    store: expand(raw.store.trim(), cwd),
     user: raw.user.trim(),
     agentUser:
       typeof raw.agentUser === "string" &&
@@ -88,7 +84,7 @@ export async function loadConfig(agentDir: string): Promise<Config> {
         ? raw.agentUser.trim()
         : "agent",
     config:
-      typeof raw.config === "string" ? expand(raw.config, agentDir) : undefined,
+      typeof raw.config === "string" ? expand(raw.config, cwd) : undefined,
     recallEnabled: raw.recallEnabled !== false,
     adminUrl:
       typeof raw.adminUrl === "string" ? raw.adminUrl : "http://127.0.0.1:8664",
