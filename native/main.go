@@ -57,6 +57,14 @@ func handle(ctx context.Context, q request) response {
 	if q.Store == "" || q.User == "" || q.User == "all" {
 		return response{Error: "Configure a Songya store and one user in songya.json"}
 	}
+	// Provisioning is an application operation, not a model tool. Reads below
+	// continue to reject a missing existing store rather than replacing it.
+	if q.Operation == "initialize_store" {
+		if _, err := songya.Open(q.Store); err != nil {
+			return response{Error: err.Error()}
+		}
+		return response{Data: map[string]any{"initialized": true}}
+	}
 	store, err := songya.OpenExisting(q.Store)
 	if err != nil {
 		return response{Error: err.Error()}
