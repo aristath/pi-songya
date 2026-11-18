@@ -23,6 +23,7 @@ test("a lost native save reply is recovered with the same ID, not a duplicate", 
     store,
     user: "user-1",
     recallEnabled: true,
+    exposeTools: true,
     adminUrl: "",
     roots: {},
   };

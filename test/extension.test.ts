@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, digest, type Invoke, type Request } from "../src/client.ts";
 import { createExtension, toolResult } from "../src/index.ts";
-import { RECALL_TYPE, type Message } from "../src/recall.ts";
+import { GUIDE_TYPE, RECALL_TYPE, type Message } from "../src/recall.ts";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -105,6 +105,7 @@ async function fixture(invoke?: Invoke) {
   const event = (name: string, value: any = {}) =>
     handlers.get(name)(value, ctx);
   return {
+    pi,
     tools,
     handlers,
     commands,
@@ -309,6 +310,7 @@ test("Pi SDK loads the standalone extension without a session or provider reques
   assert.deepEqual(result.warnings ?? [], []);
   assert.equal(result.extensions.length, 1);
   assert.equal(result.extensions[0].tools.size, 22);
+  assert.ok([...result.extensions[0].tools.values()].every((tool) => tool.definition.exposure === "hidden"));
 });
 
 test("completed assistant text is prefetched and reused on the following request", async () => {
@@ -394,4 +396,56 @@ test("configured stores keep identical record IDs distinct and route explicit to
     );
   assert.equal(denied.isError, true);
   assert.equal(f.calls.length, calls);
+});
+
+test("recall-only stores reject tools, omit tool guidance, and allow task settings to enable tools", async () => {
+  const f = await fixture();
+  const path = join(f.dir, "settings.json");
+  await writeFile(path, JSON.stringify({ songya: [
+    { store: join(f.dir, "person"), user: "person" },
+    { store: join(f.dir, "agent"), user: "agent", exposeTools: false },
+  ] }));
+  const saved = readFileSync(path, "utf8");
+  const message = question("Remember the garden");
+  f.add(message);
+  await f.event("session_start");
+  await f.event("before_agent_start");
+  for (const tool of f.tools.values()) {
+    assert.deepEqual(tool.parameters.properties.store.enum, ["person"]);
+    assert.equal(tool.exposure, "direct");
+  }
+  assert.equal(f.calls.some((r) => r.user === "agent" && r.operation === "type_configuration"), false);
+  for (const name of ["read_memory", "save_memory"]) {
+    const before = f.calls.length;
+    const denied = await f.tools.get(name).execute("hidden-" + name,
+      { store: "agent", id: "m_example", text: "A fact" }, undefined, undefined, f.ctx);
+    assert.equal(denied.isError, true);
+    assert.equal(f.calls.length, before);
+  }
+  const output = await f.event("context", { messages: [message] });
+  assert.match(recalled(output.messages), /Remembered for agent/);
+  assert.match(recalled(output.messages), /Remembered for person/);
+  const guide = output.messages.find((m: Message) => m.customType === GUIDE_TYPE);
+  assert.match(guide.content, /Store person:/);
+  assert.doesNotMatch(guide.content, /Store agent:/);
+
+  // Task overrides supply effective Pi settings without editing the profile.
+  const config = f.pi.getSettings();
+  config.songya[1].exposeTools = true;
+  f.pi.getSettings = () => config;
+  await f.event("before_agent_start");
+  assert.deepEqual(f.tools.get("read_memory").parameters.properties.store.enum, ["person", "agent"]);
+  const allowed = await f.tools.get("read_memory").execute("task-read",
+    { store: "agent", id: "m_example" }, undefined, undefined, f.ctx);
+  assert.equal(allowed.isError, false);
+  assert.equal(f.calls.at(-1)?.user, "agent");
+  assert.equal(readFileSync(path, "utf8"), saved);
+
+  for (const store of config.songya) store.exposeTools = false;
+  await f.event("before_agent_start");
+  assert.ok([...f.tools.values()].every((tool) => tool.exposure === "hidden"));
+  const recallOnly = await f.event("context", { messages: [message] });
+  assert.equal(recallOnly.messages.some((m: Message) => m.customType === GUIDE_TYPE), false);
+  assert.match(recalled(recallOnly.messages), /Remembered for agent/);
+  assert.match(recalled(recallOnly.messages), /Remembered for person/);
 });

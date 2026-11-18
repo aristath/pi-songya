@@ -21,17 +21,37 @@ Add `songya` to the project’s `.pi/settings.json` (or Pi’s global `settings.
 {
   "songya": [
     {"store":"/absolute/path/to/person/store","user":"person","recallEnabled":true,"adminUrl":"http://127.0.0.1:8664"},
-    {"store":"/absolute/path/to/agent/store","user":"agent","recallEnabled":true,"adminUrl":"http://127.0.0.1:8664"}
+    {"store":"/absolute/path/to/agent/store","user":"agent","recallEnabled":true,"exposeTools":false,"adminUrl":"http://127.0.0.1:8664"}
   ]
 }
 ```
 
 Each entry is one accessible store. `user` names that store for the tools; it is
-not record metadata. Every tool call requires `store:"person"` or `store:"agent"`.
+not record metadata. Every tool call requires `store` naming a tool-enabled entry.
 Only configured directories are accessible. Each has independent records,
 entities, topics, stories, attachments, types, indexes and recall state.
 There are no shared identities or links across stores. Songya's admin UI has a
 separate configuration; it does not read Pi settings.
+
+`exposeTools` defaults to `true`. Set it to `false` for a recall-only store:
+its name is excluded from tool choices and saving guidance, and tool calls to
+it are rejected. `recallEnabled` independently controls automatic recall.
+When all stores have tools disabled, Songya's tools are hidden.
+
+An inference task can enable tools through its existing Pi settings override.
+For example, when the second configured store is the task's memory store:
+
+```js
+import { readFile } from 'node:fs/promises';
+const config = JSON.parse(await readFile('.pi/settings.json', 'utf8'));
+config.songya[1].exposeTools = true;
+export const settings = { songya: config.songya };
+export default 'Carry out this task using the configured memory stores.';
+```
+
+Keep the task's usual scheduling header. Pi replaces arrays when merging
+settings, so this example retains the full store list. The override applies to
+the task session; it does not rewrite the user's settings.
 
 Optional `config` selects Songya's embedding and retrieval settings; otherwise
 Songya uses `<store>/config.json`. Optional `roots` maps import names to permitted

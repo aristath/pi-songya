@@ -23,6 +23,7 @@ const config: Config = {
   store: "/controlled/store",
   user: "user-1",
   recallEnabled: true,
+  exposeTools: true,
   adminUrl: "http://127.0.0.1:8664",
   roots: {},
 };
@@ -39,6 +40,7 @@ test("configuration and forgiving number normalization do not alter source wordi
           user: "user-1",
           roots: { letters: "./letters" },
           recallEnabled: false,
+          exposeTools: false,
         },
       ],
     }),
@@ -47,6 +49,7 @@ test("configuration and forgiving number normalization do not alter source wordi
   assert.equal(loaded.store, join(dir, "memory"));
   assert.equal(loaded.roots.letters, join(dir, "letters"));
   assert.equal(loaded.recallEnabled, false);
+  assert.equal(loaded.exposeTools, false);
   assert.deepEqual(
     normalizeArguments({
       offset: "3",

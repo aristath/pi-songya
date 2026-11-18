@@ -19,6 +19,7 @@ export interface Config {
   user: string;
   config?: string;
   recallEnabled: boolean;
+  exposeTools: boolean;
   adminUrl: string;
   roots: Record<string, string>;
 }
@@ -94,6 +95,7 @@ export async function loadConfig(
           ? expand(entry.config, cwd)
           : undefined,
       recallEnabled: entry.recallEnabled !== false,
+      exposeTools: entry.exposeTools !== false,
       adminUrl:
         typeof entry.adminUrl === "string"
           ? entry.adminUrl

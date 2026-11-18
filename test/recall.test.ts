@@ -19,6 +19,7 @@ const config: Config = {
   store: "/store",
   user: "user-1",
   recallEnabled: true,
+  exposeTools: true,
   adminUrl: "",
   roots: {},
 };

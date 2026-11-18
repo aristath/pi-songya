@@ -180,6 +180,7 @@ export function createExtension(deps: Dependencies = {}) {
           label: tool.name.replaceAll("_", " "),
           description: tool.description,
           parameters: parametersFor(tool, names),
+          exposure: names.length ? "direct" : "hidden",
           prepareArguments,
           ...(tool.name === "type_configuration"
             ? {
@@ -194,11 +195,11 @@ export function createExtension(deps: Dependencies = {}) {
           async execute(callId, args, signal, _onUpdate, ctx) {
             const input = args as Record<string, unknown>;
             const selected = (await current(ctx)).find(
-              (binding) => binding.config.user === input.store,
+              (binding) => binding.config.exposeTools && binding.config.user === input.store,
             );
             if (!selected)
               return toolResult({
-                error: "Choose a configured store by name.",
+                error: "Choose a store with tools enabled.",
               });
             const key =
               "pi_" +
@@ -231,7 +232,7 @@ export function createExtension(deps: Dependencies = {}) {
       lastMessages = [];
       try {
         const selected = await current(ctx);
-        registerTools(selected.map((b) => b.config.user));
+        registerTools(selected.filter((b) => b.config.exposeTools).map((b) => b.config.user));
         for (const binding of selected) await recover(ctx, binding);
       } catch (error) {
         warn(ctx, error);
@@ -243,6 +244,7 @@ export function createExtension(deps: Dependencies = {}) {
         const selected = await current(ctx);
         for (const binding of selected) {
           await recover(ctx, binding);
+          if (!binding.config.exposeTools) continue;
           const reply = await client.call(
             binding.config,
             "type_configuration",
@@ -255,7 +257,7 @@ export function createExtension(deps: Dependencies = {}) {
               reply.error
             : (reply.data?.instructions ?? "");
         }
-        registerTools(selected.map((b) => b.config.user));
+        registerTools(selected.filter((b) => b.config.exposeTools).map((b) => b.config.user));
         ctx.ui.setStatus(
           "songya",
           `Songya · ${selected.map((b) => b.config.user + (b.config.recallEnabled ? "" : " (recall off)")).join(", ")}`,
@@ -307,13 +309,14 @@ export function createExtension(deps: Dependencies = {}) {
           if (!persist(ctx, binding, state)) return;
         }
         lastMessages = messages;
-        const guide: Message = {
+        const exposed = selected.filter((b) => b.config.exposeTools);
+        const guide: Message | undefined = exposed.length ? {
           role: "custom",
           customType: GUIDE_TYPE,
           display: false,
           timestamp: 0,
-          content: `Configured Songya stores: ${selected.map((b) => b.config.user).join(", ")}.\n${GUIDE}\n${selected.map((b) => `Store ${b.config.user}:\n${b.instructions}`).join("\n\n")}`,
-        };
+          content: `Configured Songya stores: ${exposed.map((b) => b.config.user).join(", ")}.\n${GUIDE}\n${exposed.map((b) => `Store ${b.config.user}:\n${b.instructions}`).join("\n\n")}`,
+        } : undefined;
         const cost = (message: Message) =>
           estimateTokens(message as Parameters<typeof estimateTokens>[0]);
         const active = new Set(pi.getActiveTools());
@@ -328,7 +331,7 @@ export function createExtension(deps: Dependencies = {}) {
           ? window -
             (pi.getSettings().compaction?.reserveTokens ??
               DEFAULT_COMPACTION_SETTINGS.reserveTokens) -
-            messages.reduce((n, m) => n + cost(m), cost(prompt) + cost(guide))
+            messages.reduce((n, m) => n + cost(m), cost(prompt) + (guide ? cost(guide) : 0))
           : Infinity;
         let projected = messages;
         // Fit all stores against one shared budget, retaining each store's own IDs.
@@ -347,7 +350,7 @@ export function createExtension(deps: Dependencies = {}) {
             projected = next;
           }
         return {
-          messages: [guide, ...projected] as unknown as typeof event.messages,
+          messages: (guide ? [guide, ...projected] : projected) as unknown as typeof event.messages,
         };
       } catch (error) {
         warn(ctx, error);
@@ -447,7 +450,7 @@ export function createExtension(deps: Dependencies = {}) {
             selected
               .map(
                 (b) =>
-                  `Store: ${b.config.user}\nDirectory: ${b.config.store}\nAutomatic recall: ${b.config.recallEnabled ? "on" : "off"}`,
+                  `Store: ${b.config.user}\nDirectory: ${b.config.store}\nTools: ${b.config.exposeTools ? "on" : "off"}\nAutomatic recall: ${b.config.recallEnabled ? "on" : "off"}`,
               )
               .join("\n\n") +
               `\nConfiguration: ${join(ctx.cwd, ".pi/settings.json")}`,
