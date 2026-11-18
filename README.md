@@ -38,7 +38,9 @@ its name is excluded from tool choices and saving guidance, and tool calls to
 it are rejected. `recallEnabled` independently controls automatic recall.
 When all stores have tools disabled, Songya's tools are hidden.
 
-An inference task can enable tools through its existing Pi settings override.
+With the optional `pi-subconscious` task runner and a host supporting task-specific
+Pi settings, a task can enable tools through a settings override. The runner and
+host apply this override; `pi-songya` does not interpret task exports itself.
 For example, when the second configured store is the task's memory store:
 
 ```js
