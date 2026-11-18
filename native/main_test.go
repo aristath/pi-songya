@@ -88,7 +88,7 @@ func TestSaveRetryAndPartialEditPreserveOriginalOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := doc.Record(songya.Memories)
-	if record.User != "user-2" || doc.Body != "Exact words: α😀. Preserve these details." {
+	if doc.Body != "Exact words: α😀. Preserve these details." {
 		t.Fatal("partial update changed owner/body", record)
 	}
 	conflict := f.call("save_memory", map[string]any{"title": "Changed intent", "text": "different", "user": "user-2"}, "first")
@@ -134,7 +134,8 @@ func TestScopedSearchAndConnectedStories(t *testing.T) {
 	f := newFixture(t)
 	entity := data(t, f.call("save_entity", map[string]any{"create": true, "name": "Example musician", "description": "A musician."}, "entity"))["id"].(string)
 	id := f.memory("memory", "Example musician concert", "We heard Example musician playing piano.", "user-1")
-	f.memory("other", "Example musician private", "Other owner's private concert account.", "user-2")
+	other := newFixture(t)
+	other.memory("other", "Example musician private", "Other owner's private concert account.", "user-2")
 	data(t, f.call("save_memory", map[string]any{"id": id, "relations": []any{map[string]any{"type": "related_to", "target": entity}}}, "link"))
 	story := data(t, f.call("save_story", map[string]any{"user": "user-1", "title": "Concert story", "text": "The concert", "relations": []any{map[string]any{"type": "related_to", "target": id}}}, "story"))["id"].(string)
 	search := data(t, f.call("search_memory", map[string]any{"user": "user-1", "text": "Example musician", "mode": "lexical", "limit": 20}, ""))
@@ -158,9 +159,9 @@ func TestScopedSearchAndConnectedStories(t *testing.T) {
 		t.Fatal("graph lost connection", graph)
 	}
 }
-func TestClassificationUsesSelectedUserAndKeepsOtherTypes(t *testing.T) {
+func TestClassificationUsesStoreTypes(t *testing.T) {
 	f := newFixture(t)
-	cfg, err := f.store.TypeConfiguration(context.Background(), "user-1")
+	cfg, err := f.store.TypeConfiguration(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,11 +176,11 @@ func TestClassificationUsesSelectedUserAndKeepsOtherTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.TypeFor("user-1") != typ || doc.Record(songya.Memories).User != "user-2" {
+	if doc.Record(songya.Memories).Type != typ {
 		t.Fatal("classification changed ownership", doc)
 	}
 	result := data(t, f.call("type_configuration", map[string]any{}, ""))
-	if result["user"] != "user-1" || result["instructions"] == "" {
+	if result["instructions"] == "" {
 		t.Fatal("classification guidance missing", result)
 	}
 }
@@ -225,8 +226,9 @@ func TestAttachmentsRevisionAndActualImageContent(t *testing.T) {
 func TestAutomaticRecallUsesControlledProviderAndKnownRecords(t *testing.T) {
 	f := newFixture(t)
 	id := f.memory("recall-me", "Train journey", "We travelled by train.", "user-1")
-	hidden := f.memory("other-owner", "Private journey", "A different person's journey.", "user-2")
-	r := data(t, f.call("automatic_recall", map[string]any{"messages": []string{"Tell me about the train"}, "owners": []string{"user-1", "agent"}, "known_ids": []string{id}}, ""))
+	other := newFixture(t)
+	hidden := other.memory("other-owner", "Private journey", "A different person's journey.", "user-2")
+	r := data(t, f.call("automatic_recall", map[string]any{"messages": []string{"Tell me about the train"}, "known_ids": []string{id}}, ""))
 	encoded, _ := json.Marshal(r)
 	if !bytes.Contains(encoded, []byte(id)) || bytes.Contains(encoded, []byte(hidden)) {
 		t.Fatal("recall scope wrong", r)

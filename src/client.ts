@@ -1,4 +1,4 @@
-import { SettingsManager } from '@earendil-works/pi-coding-agent';
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 export interface Config {
   store: string;
   user: string;
-  agentUser?: string;
   config?: string;
   recallEnabled: boolean;
   adminUrl: string;
@@ -51,50 +50,57 @@ const expand = (path: string, base: string) =>
         : path,
   );
 
-export async function loadConfig(agentDir: string, cwd = process.cwd(), settings?: Record<string, any>): Promise<Config> {
-  const path = join(cwd, ".pi", "settings.json");
-  const raw = (settings ?? SettingsManager.create(cwd, agentDir, { projectTrusted: true }).getSettings() as any).songya;
-  if (
-    !raw ||
-    typeof raw.store !== "string" ||
-    !raw.store.trim() ||
-    typeof raw.user !== "string" ||
-    !raw.user.trim() ||
-    raw.user === "all"
-  )
-    throw new Error(`${path} needs a store path and one user ID.`);
-  if (
-    raw.roots !== undefined &&
-    (!raw.roots || typeof raw.roots !== "object" || Array.isArray(raw.roots))
-  )
-    throw new Error(`${path}: roots must map import names to paths.`);
-  const roots: Record<string, string> = {};
-  for (const [name, pathValue] of Object.entries(raw.roots ?? {})) {
-    if (typeof pathValue !== "string")
-      throw new Error(`Import root ${name} needs a path.`);
-    roots[name] = expand(pathValue, cwd);
-  }
-  return {
-    store: expand(raw.store.trim(), cwd),
-    user: raw.user.trim(),
-    agentUser:
-      typeof raw.agentUser === "string" &&
-      raw.agentUser.trim() &&
-      raw.agentUser.trim() !== "all"
-        ? raw.agentUser.trim()
-        : "agent",
-    config:
-      typeof raw.config === "string" ? expand(raw.config, cwd) : undefined,
-    recallEnabled: raw.recallEnabled !== false,
-    adminUrl:
-      typeof raw.adminUrl === "string" ? raw.adminUrl : "http://127.0.0.1:8664",
-    roots,
-  };
+export async function loadConfig(
+  agentDir: string,
+  cwd = process.cwd(),
+  settings?: Record<string, any>,
+): Promise<Config[]> {
+  const raw = (
+    settings ??
+    (SettingsManager.create(cwd, agentDir, {
+      projectTrusted: true,
+    }).getSettings() as any)
+  ).songya;
+  if (!Array.isArray(raw) || !raw.length)
+    throw new Error(
+      `${join(cwd, ".pi/settings.json")} needs a songya array of stores.`,
+    );
+  const names = new Set<string>();
+  return raw.map((entry) => {
+    if (
+      !entry ||
+      typeof entry.store !== "string" ||
+      !entry.store.trim() ||
+      typeof entry.user !== "string" ||
+      !entry.user.trim()
+    )
+      throw new Error("Each Songya store needs a path and a user identifier.");
+    const user = entry.user.trim();
+    if (names.has(user))
+      throw new Error(`Duplicate Songya store name: ${user}`);
+    names.add(user);
+    const roots: Record<string, string> = {};
+    for (const [name, path] of Object.entries(entry.roots ?? {})) {
+      if (typeof path !== "string")
+        throw new Error(`Import root ${name} needs a path.`);
+      roots[name] = expand(path, cwd);
+    }
+    return {
+      store: expand(entry.store.trim(), cwd),
+      user,
+      roots,
+      config:
+        typeof entry.config === "string"
+          ? expand(entry.config, cwd)
+          : undefined,
+      recallEnabled: entry.recallEnabled !== false,
+      adminUrl:
+        typeof entry.adminUrl === "string"
+          ? entry.adminUrl
+          : "http://127.0.0.1:8664",
+    };
+  });
 }
-
-export const recallOwners = (config: Config) => [
-  ...new Set([config.user, config.agentUser ?? "agent"]),
-];
 
 export function normalizeArguments(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
@@ -115,25 +121,6 @@ export function normalizeArguments(input: unknown): Record<string, unknown> {
     return v;
   };
   return visit(input) as Record<string, unknown>;
-}
-export function scopedArguments(
-  operation: string,
-  input: Record<string, unknown>,
-  user: string,
-) {
-  const args = { ...input };
-  const query = [
-    "prepare_memory",
-    "search_memory",
-    "recall_memory",
-    "explore_memory",
-    "memory_timeline",
-    "import_memories",
-  ].includes(operation);
-  const newRecord =
-    ["save_memory", "save_story"].includes(operation) && !args.id;
-  if ((query || newRecord) && !Object.hasOwn(args, "user")) args.user = user;
-  return args;
 }
 export function mutates(operation: string, args: Record<string, unknown>) {
   return (
@@ -328,7 +315,9 @@ export class Client {
       user: config.user,
       roots: config.roots,
       operation,
-      args: scopedArguments(operation, args, config.user),
+      args: Object.fromEntries(
+        Object.entries(args).filter(([key]) => key !== "store"),
+      ),
       ...(key ? { key } : {}),
     };
     const write = mutates(operation, args);

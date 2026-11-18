@@ -16,7 +16,7 @@ async function fixture(invoke?: Invoke) {
   const dir = await mkdtemp(join(tmpdir(), "pi-songya-extension-"));
   await writeFile(
     join(dir, "settings.json"),
-    JSON.stringify({ songya: { store: join(dir, "store"), user: "user-1" } }),
+    JSON.stringify({ songya: [{ store: join(dir, "store"), user: "user-1" }] }),
   );
   const tools = new Map<string, any>();
   const handlers = new Map<string, any>();
@@ -61,7 +61,10 @@ async function fixture(invoke?: Invoke) {
     return { data: { status: "committed", id: "m_saved" } };
   });
   const pi = {
-    getSettings: () => JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")),
+    getActiveTools: () => [...tools.keys()],
+    getAllTools: () => [...tools.values()],
+    getSettings: () =>
+      JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")),
     on: (name: string, handler: any) => handlers.set(name, handler),
     registerTool: (tool: any) => tools.set(tool.name, tool),
     registerCommand: (name: string, command: any) =>
@@ -77,6 +80,7 @@ async function fixture(invoke?: Invoke) {
   };
   const ctx = {
     cwd: dir,
+    getSystemPrompt: () => "",
     mode: "tui",
     hasUI: true,
     get signal() {
@@ -135,7 +139,7 @@ test("Pi receives direct tools and native typed/image/error results", async () =
     .get("save_memory")
     .execute(
       "call-1",
-      { title: "Fact", text: "Exact words" },
+      { store: "user-1", title: "Fact", text: "Exact words" },
       undefined,
       undefined,
       f.ctx,
@@ -143,7 +147,7 @@ test("Pi receives direct tools and native typed/image/error results", async () =
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.status, "committed");
   const write = f.calls.find((call) => call.operation === "save_memory");
-  assert.equal(write?.args.user, "user-1");
+  assert.equal(write?.args.user, undefined);
   assert.ok(write?.key?.startsWith("pi_"));
   const failure = toolResult({
     error: "still pending",
@@ -188,31 +192,7 @@ test("recall is hidden context, never a conversation utterance, and off leaves t
   );
   assert.ok(f.tools.has("search_memory"));
 });
-test("configured agent ownership applies to recall, preview and model guidance", async () => {
-  const f = await fixture();
-  await writeFile(
-    join(f.dir, "settings.json"),
-    JSON.stringify({ songya: {
-      store: join(f.dir, "store"),
-      user: "user-1",
-      agentUser: "assistant",
-    } }),
-  );
-  const message = question("Example subject");
-  f.add(message);
-  const output = await f.event("context", { messages: [message] });
-  const recall = f.calls.find((call) => call.operation === "automatic_recall");
-  assert.deepEqual(recall?.args.owners, ["user-1", "assistant"]);
-  assert.ok(
-    output.messages.some(
-      (item: Message) =>
-        item.customType === "pi-songya:guide" &&
-        String(item.content).includes("Agent owner (agentUser): assistant"),
-    ),
-  );
-  await f.commands.get("songya").handler("preview Example subject", f.ctx);
-  assert.deepEqual(f.calls.at(-1)?.args.owners, ["user-1", "assistant"]);
-});
+
 test("tree navigation restores its own branch state rather than the last visited branch", async () => {
   const f = await fixture();
   const first = question("first branch", 1);
@@ -232,28 +212,7 @@ test("tree navigation restores its own branch state rather than the last visited
   assert.match(recalled(restored.messages), /first branch/);
   assert.doesNotMatch(recalled(restored.messages), /other branch/);
 });
-test("session user binding changes default owners and excludes the previous user recall", async () => {
-  const f = await fixture();
-  const message = question("same subject");
-  f.add(message);
-  await f.event("context", { messages: [message] });
-  await f.commands.get("songya").handler("user user-2", f.ctx);
-  const result = await f.event("context", { messages: [message] });
-  assert.match(recalled(result.messages), /for user-2/);
-  assert.doesNotMatch(recalled(result.messages), /for user-1/);
-  await f.tools
-    .get("save_memory")
-    .execute(
-      "call-user",
-      { text: "a new account" },
-      undefined,
-      undefined,
-      f.ctx,
-    );
-  const call = f.calls.findLast((call) => call.operation === "save_memory");
-  assert.equal(call?.user, "user-2");
-  assert.equal(call?.args.user, "user-2");
-});
+
 test("late recall cannot write into a switched session", async () => {
   let finish!: (value: any) => void;
   let requested!: (value?: unknown) => void;
@@ -374,4 +333,65 @@ test("completed assistant text is prefetched and reused on the following request
   );
   assert.match(recalled(output.messages), /planted a tree/);
   await f.event("session_shutdown");
+});
+
+test("configured stores keep identical record IDs distinct and route explicit tool choices", async () => {
+  const f = await fixture(async (request) =>
+    request.operation === "automatic_recall"
+      ? {
+          data: {
+            results: (request.args.messages as string[]).map(() => ({
+              mode: "semantic",
+              status: "ready",
+              incomplete: false,
+              items: [{ id: "m_same", content: `Memory in ${request.user}` }],
+            })),
+            known: [],
+          },
+        }
+      : { data: { status: "committed", id: "m_same" } },
+  );
+  await writeFile(
+    join(f.dir, "settings.json"),
+    JSON.stringify({
+      songya: [
+        { store: join(f.dir, "first"), user: "first" },
+        { store: join(f.dir, "second"), user: "second" },
+      ],
+    }),
+  );
+  const message = question("Remember both stores");
+  f.add(message);
+  await f.event("session_start");
+  const projected = await f.event("context", { messages: [message] });
+  assert.match(recalled(projected.messages), /"store":"first"/);
+  assert.match(recalled(projected.messages), /"store":"second"/);
+  assert.match(recalled(projected.messages), /Memory in first/);
+  assert.match(recalled(projected.messages), /Memory in second/);
+  const result = await f.tools
+    .get("save_memory")
+    .execute(
+      "second-call",
+      { store: "second", text: "A saved fact" },
+      undefined,
+      undefined,
+      f.ctx,
+    );
+  assert.equal(result.isError, false);
+  const write = f.calls.findLast((call) => call.operation === "save_memory");
+  assert.equal(write?.store, join(f.dir, "second"));
+  assert.equal(write?.args.user, undefined);
+  assert.equal(write?.args.store, undefined);
+  const calls = f.calls.length;
+  const denied = await f.tools
+    .get("read_memory")
+    .execute(
+      "unknown-call",
+      { store: "unknown", id: "m_same" },
+      undefined,
+      undefined,
+      f.ctx,
+    );
+  assert.equal(denied.isError, true);
+  assert.equal(f.calls.length, calls);
 });

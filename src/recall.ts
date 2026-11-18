@@ -1,4 +1,4 @@
-import { digest, recallOwners, type Config, type Reply } from "./client.ts";
+import { digest, type Config, type Reply } from "./client.ts";
 
 export interface Message {
   role: string;
@@ -48,12 +48,7 @@ export const anchorOf = (message: Message) =>
 export const sourceOf = (message: Message) =>
   digest([message.role, plainText(message)]);
 export const scopeOf = (config: Config, _session: string) =>
-  digest([
-    config.store,
-    config.config,
-    config.user,
-    config.agentUser ?? "agent",
-  ]);
+  digest([config.store, config.config, config.user]);
 export const cleanMessages = (messages: Message[]) =>
   messages.filter(
     (m) =>
@@ -131,7 +126,6 @@ export function recallRequest(
     eligible,
     args: {
       messages: eligible.map(plainText),
-      owners: recallOwners(config),
       known_ids: [...new Set(state.slots.map((slot) => slot.memory.id))],
     },
   };
@@ -227,6 +221,7 @@ export function applyRecall(
 export function projectRecall(
   messages: Message[],
   state: RecallState,
+  store?: string,
 ): Message[] {
   const out: Message[] = [];
   const anchors = new Set(messages.map(anchorOf));
@@ -235,7 +230,7 @@ export function projectRecall(
     customType: RECALL_TYPE,
     display: false,
     timestamp: 0,
-    content: `<songya_recollection>\n${JSON.stringify(slot.memory.retracted ? { id: slot.memory.id, retracted: true } : { id: slot.memory.id, text: slot.memory.content, ...(slot.memory.update ? { update: true } : {}) }).replaceAll("<", "\\u003c")}\n</songya_recollection>`,
+    content: `<songya_recollection>\n${JSON.stringify(slot.memory.retracted ? { store, id: slot.memory.id, retracted: true } : { store, id: slot.memory.id, text: slot.memory.content, ...(slot.memory.update ? { update: true } : {}) }).replaceAll("<", "\\u003c")}\n</songya_recollection>`,
   });
   // Compaction can remove an anchor from the active window. Its surviving
   // recollections remain available, ahead of the retained conversation.
@@ -252,7 +247,7 @@ export function projectRecall(
       customType: RECALL_TYPE,
       display: false,
       timestamp: 0,
-      content: `<songya_status>${JSON.stringify({ notice: state.notice }).replaceAll("<", "\\u003c")}</songya_status>`,
+      content: `<songya_status>${JSON.stringify({ store, notice: state.notice }).replaceAll("<", "\\u003c")}</songya_status>`,
     });
   return out;
 }
@@ -263,6 +258,7 @@ export function fitRecall(
   state: RecallState,
   budget: number,
   cost: (message: Message) => number,
+  store?: string,
 ) {
   const groups = new Map<string, Slot[]>();
   for (const slot of state.slots)
@@ -270,10 +266,11 @@ export function fitRecall(
   const kept = new Set<string>();
   let remaining = Math.max(0, budget);
   for (const [id, slots] of groups) {
-    const size = projectRecall([], { ...state, slots, notice: "" }).reduce(
-      (sum, message) => sum + cost(message),
-      0,
-    );
+    const size = projectRecall(
+      [],
+      { ...state, slots, notice: "" },
+      store,
+    ).reduce((sum, message) => sum + cost(message), 0);
     if (size <= remaining) {
       kept.add(id);
       remaining -= size;
@@ -292,10 +289,11 @@ export function fitRecall(
   ]
     .filter(Boolean)
     .join(" ");
-  const noticeCost = projectRecall([], { ...state, slots: [], notice }).reduce(
-    (sum, message) => sum + cost(message),
-    0,
-  );
+  const noticeCost = projectRecall(
+    [],
+    { ...state, slots: [], notice },
+    store,
+  ).reduce((sum, message) => sum + cost(message), 0);
   selected.notice = notice && noticeCost <= remaining ? notice : "";
   return { state: selected, omitted };
 }

@@ -11,7 +11,6 @@ import {
   digest,
   loadConfig,
   mutates,
-  recallOwners,
   type Config,
   type Reply,
 } from "./client.ts";
@@ -23,7 +22,6 @@ import {
   beforeRecall,
   cleanMessages,
   emptyState,
-  plainText,
   projectRecall,
   recallRequest,
   restoreState,
@@ -36,7 +34,6 @@ import {
 const STATE = "pi-songya:recall-state";
 const PREFERENCES = "pi-songya:preferences";
 interface Preferences {
-  user?: string;
   recallEnabled?: boolean;
 }
 interface Cache {
@@ -45,7 +42,6 @@ interface Cache {
   config: Config;
   state: RecallState;
   instructions: string;
-  kinds?: Record<string, { id: string; description?: string }[]>;
 }
 export interface Dependencies {
   agentDir?: string;
@@ -53,77 +49,82 @@ export interface Dependencies {
 }
 export function preferences(ctx: ExtensionContext): Preferences {
   let result: Preferences = {};
-  for (const entry of ctx.sessionManager.getBranch())
-    if (entry.type === "custom" && entry.customType === PREFERENCES) {
-      const value = entry.data as Preferences & { reset?: boolean };
-      if (value?.reset) result = {};
-      else if (value && typeof value === "object")
-        result = {
-          ...result,
-          ...(typeof value.user === "string" ? { user: value.user } : {}),
-          ...(typeof value.recallEnabled === "boolean"
-            ? { recallEnabled: value.recallEnabled }
-            : {}),
-        };
-    }
+  for (const entry of ctx.sessionManager.getBranch()) {
+    if (entry.type !== "custom" || entry.customType !== PREFERENCES) continue;
+    const value = entry.data as Preferences & { reset?: boolean };
+    if (value?.reset) result = {};
+    else if (typeof value?.recallEnabled === "boolean")
+      result.recallEnabled = value.recallEnabled;
+  }
   return result;
 }
 export function toolResult(reply: Reply) {
+  const value = reply.error
+    ? { ...reply.data, error: reply.error }
+    : (reply.data ?? {});
   return {
     content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          reply.error
-            ? { ...reply.data, error: reply.error }
-            : (reply.data ?? {}),
-        ),
-      },
+      { type: "text" as const, text: JSON.stringify(value) },
       ...(reply.images ?? []).map((image) => ({
         type: "image" as const,
         ...image,
       })),
     ],
     details: reply,
-    structuredContent: reply.error
-      ? { ...reply.data, error: reply.error }
-      : (reply.data ?? {}),
+    structuredContent: value,
     isError: !!reply.error,
   };
 }
 export function createExtension(deps: Dependencies = {}) {
   return function songya(pi: ExtensionAPI) {
-    const agentDir = deps.agentDir ?? getAgentDir();
-    const client = deps.client ?? new Client(agentDir);
-    async function configuration(ctx: ExtensionContext) {
-      const config = await loadConfig(agentDir, ctx.cwd, pi.getSettings());
-      return config;
-    }
-    let cache: Cache | undefined;
+    const agentDir = deps.agentDir ?? getAgentDir(),
+      client = deps.client ?? new Client(agentDir);
+    const caches = new Map<string, Cache>(),
+      recovered = new Set<string>();
+    const warming = new Map<
+      string,
+      { key: string; promise: Promise<Reply>; controller: AbortController }
+    >();
     let lastMessages: Message[] = [];
-    let warming:
-      | { key: string; promise: Promise<Reply>; controller: AbortController }
-      | undefined;
-    let recovering: Promise<string[]> | undefined;
-    let recoveryScope = "";
     const warn = (ctx: ExtensionContext, error: unknown) =>
       ctx.ui.setStatus(
         "songya",
         `Songya: ${(error as Error).message ?? String(error)}`,
       );
     const stopWarm = () => {
-      warming?.controller.abort();
-      warming = undefined;
+      for (const work of warming.values()) work.controller.abort();
+      warming.clear();
     };
-    async function current(ctx: ExtensionContext): Promise<Cache> {
-      const global = await configuration(ctx);
-      const pref = preferences(ctx);
-      const config = { ...global, ...pref };
-      const scope = scopeOf(config, ctx.sessionManager.getSessionId());
+    async function current(ctx: ExtensionContext) {
+      const configs = await loadConfig(agentDir, ctx.cwd, pi.getSettings()),
+        pref = preferences(ctx);
       const session = ctx.sessionManager.getSessionId();
-      if (cache?.scope !== scope || cache.session !== session) {
-        stopWarm();
-        lastMessages = [];
+      const result: Cache[] = [];
+      for (const configured of configs) {
+        const config = {
+          ...configured,
+          recallEnabled:
+            configured.recallEnabled && pref.recallEnabled !== false,
+        };
+        const scope = scopeOf(config, session);
+        let binding = caches.get(config.user);
+        if (
+          !binding ||
+          binding.scope !== scope ||
+          binding.session !== session
+        ) {
+          warming.get(config.user)?.controller.abort();
+          warming.delete(config.user);
+          binding = {
+            scope,
+            session,
+            config,
+            state: emptyState(scope),
+            instructions: "",
+          };
+          caches.set(config.user, binding);
+        }
+        binding.config = config;
         let state = emptyState(scope);
         for (const entry of ctx.sessionManager.getBranch())
           if (
@@ -132,28 +133,26 @@ export function createExtension(deps: Dependencies = {}) {
             (entry.data as RecallState)?.scope === scope
           )
             state = restoreState(entry.data, scope);
-        cache = { scope, session, config, state, instructions: "" };
-      } else {
-        cache.config = config;
-        let state = emptyState(scope);
-        for (const entry of ctx.sessionManager.getBranch())
-          if (
-            entry.type === "custom" &&
-            entry.customType === STATE &&
-            (entry.data as RecallState)?.scope === scope
-          )
-            state = restoreState(entry.data, scope);
-        cache.state = state;
+        binding.state = state;
+        result.push(binding);
       }
-      return cache;
+      for (const name of caches.keys())
+        if (!configs.some((c) => c.user === name)) {
+          warming.get(name)?.controller.abort();
+          warming.delete(name);
+          caches.delete(name);
+        }
+      return result;
     }
     function persist(
       ctx: ExtensionContext,
       binding: Cache,
       state: RecallState,
-      session: string,
     ) {
-      if (ctx.sessionManager.getSessionId() !== session || cache !== binding)
+      if (
+        ctx.sessionManager.getSessionId() !== binding.session ||
+        caches.get(binding.config.user) !== binding
+      )
         return false;
       if (digest(binding.state) !== digest(state)) {
         pi.appendEntry(STATE, state);
@@ -163,27 +162,24 @@ export function createExtension(deps: Dependencies = {}) {
     }
     async function recover(ctx: ExtensionContext, binding: Cache) {
       const scope = digest([binding.config.store, binding.config.user]);
-      if (!recovering || recoveryScope !== scope) {
-        recoveryScope = scope;
-        recovering = client.recover(binding.config);
-      }
-      const errors = await recovering;
-      if (errors.length) recovering = undefined;
+      if (recovered.has(scope)) return;
+      const errors = await client.recover(binding.config);
       if (errors.length)
         warn(
           ctx,
           new Error(
-            `${errors.length} retained write(s) need attention; /songya recover retries them.`,
+            `${binding.config.user}: retained writes need attention; /songya recover retries them.`,
           ),
         );
+      else recovered.add(scope);
     }
-    function registerTools(binding?: Cache) {
+    function registerTools(names: string[] = []) {
       for (const tool of SPECS)
         pi.registerTool({
           name: tool.name,
           label: tool.name.replaceAll("_", " "),
           description: tool.description,
-          parameters: parametersFor(tool, binding?.kinds),
+          parameters: parametersFor(tool, names),
           prepareArguments,
           ...(tool.name === "type_configuration"
             ? {
@@ -196,7 +192,14 @@ export function createExtension(deps: Dependencies = {}) {
             ? "sequential"
             : "parallel",
           async execute(callId, args, signal, _onUpdate, ctx) {
-            const selected = await current(ctx);
+            const input = args as Record<string, unknown>;
+            const selected = (await current(ctx)).find(
+              (binding) => binding.config.user === input.store,
+            );
+            if (!selected)
+              return toolResult({
+                error: "Choose a configured store by name.",
+              });
             const key =
               "pi_" +
               digest([
@@ -208,55 +211,54 @@ export function createExtension(deps: Dependencies = {}) {
             const reply = await client.call(
               selected.config,
               tool.name,
-              args as Record<string, unknown>,
+              input,
               key,
               signal,
             );
-            if (mutates(tool.name, args as Record<string, unknown>)) stopWarm();
-            return toolResult(reply);
+            if (mutates(tool.name, input)) stopWarm();
+            return toolResult({
+              ...reply,
+              data: { ...reply.data, store: selected.config.user },
+            });
           },
         });
     }
     registerTools();
     pi.on("session_start", async (_event, ctx) => {
       stopWarm();
-      cache = undefined;
-      recovering = undefined;
+      caches.clear();
+      recovered.clear();
+      lastMessages = [];
       try {
         const selected = await current(ctx);
-        await recover(ctx, selected);
+        registerTools(selected.map((b) => b.config.user));
+        for (const binding of selected) await recover(ctx, binding);
       } catch (error) {
         warn(ctx, error);
       }
     });
-    pi.on("session_shutdown", async () => {
-      stopWarm();
-    });
+    pi.on("session_shutdown", async () => stopWarm());
     pi.on("before_agent_start", async (_event, ctx) => {
       try {
         const selected = await current(ctx);
-        await recover(ctx, selected);
-        const reply = await client.call(
-          selected.config,
-          "type_configuration",
-          {},
-          undefined,
-          ctx.signal,
-        );
-        if (cache !== selected) return;
-        if (reply.error) {
-          selected.kinds = undefined;
-          selected.instructions =
-            "Type settings could not be read. Omit type, preserve existing classifications, and report the issue: " +
-            reply.error;
-        } else {
-          selected.kinds = reply.data?.kinds;
-          selected.instructions = reply.data?.instructions ?? "";
+        for (const binding of selected) {
+          await recover(ctx, binding);
+          const reply = await client.call(
+            binding.config,
+            "type_configuration",
+            {},
+            undefined,
+            ctx.signal,
+          );
+          binding.instructions = reply.error
+            ? "Type settings unavailable; omit classifications and report: " +
+              reply.error
+            : (reply.data?.instructions ?? "");
         }
-        registerTools(selected);
+        registerTools(selected.map((b) => b.config.user));
         ctx.ui.setStatus(
           "songya",
-          `Songya · ${selected.config.user}${selected.config.recallEnabled ? "" : " · recall off"}`,
+          `Songya · ${selected.map((b) => b.config.user + (b.config.recallEnabled ? "" : " (recall off)")).join(", ")}`,
         );
       } catch (error) {
         warn(ctx, error);
@@ -264,87 +266,86 @@ export function createExtension(deps: Dependencies = {}) {
     });
     pi.on("context", async (event, ctx) => {
       const messages = cleanMessages(event.messages as unknown as Message[]);
-      const session = ctx.sessionManager.getSessionId();
       try {
         const selected = await current(ctx);
-        let state = selected.state;
-        // Projected entries reflect Pi edits/tree navigation; old compaction sources
-        // still exist in the branch even when absent from the active model window.
         const sources = ctx.sessionManager
           .buildContextEntries()
           .filter((entry) => entry.type === "message")
           .map((entry) => entry.message as unknown as Message);
-        if (selected.config.recallEnabled) {
-          state = beforeRecall(state, messages, sources);
-          if (!persist(ctx, selected, state, session)) return;
-          const request = recallRequest(selected.config, messages, state);
-          if (request.eligible.length) {
-            const key = digest([selected.scope, request.args]);
-            let reply: Reply;
-            const leaf = ctx.sessionManager.getLeafId();
-            try {
-              const pending = warming?.key === key ? warming : undefined;
-              if (pending) {
-                reply = await pending.promise;
-                if (warming === pending) warming = undefined;
-              } else {
-                stopWarm();
-                reply = await client.call(
-                  selected.config,
-                  "automatic_recall",
-                  request.args,
-                  undefined,
-                  ctx.signal,
-                );
-              }
-            } catch (error) {
-              if (ctx.signal?.aborted) return;
-              reply = { error: (error as Error).message };
+        for (const binding of selected) {
+          if (!binding.config.recallEnabled) continue;
+          let state = beforeRecall(binding.state, messages, sources);
+          if (!persist(ctx, binding, state)) return;
+          const request = recallRequest(binding.config, messages, state);
+          if (!request.eligible.length) continue;
+          const key = digest([binding.scope, request.args]),
+            pending = warming.get(binding.config.user);
+          const leaf = ctx.sessionManager.getLeafId();
+          let reply: Reply;
+          try {
+            if (pending?.key === key) {
+              reply = await pending.promise;
+              warming.delete(binding.config.user);
+            } else {
+              pending?.controller.abort();
+              warming.delete(binding.config.user);
+              reply = await client.call(
+                binding.config,
+                "automatic_recall",
+                request.args,
+                undefined,
+                ctx.signal,
+              );
             }
-            if (ctx.sessionManager.getLeafId() !== leaf)
-              return { messages: messages as unknown as typeof event.messages };
-            state = applyRecall(state, messages, request.eligible, reply);
-            if (!persist(ctx, selected, state, session)) return;
+          } catch (error) {
+            if (ctx.signal?.aborted) return;
+            reply = { error: (error as Error).message };
           }
+          if (ctx.sessionManager.getLeafId() !== leaf)
+            return { messages: messages as unknown as typeof event.messages };
+          state = applyRecall(state, messages, request.eligible, reply);
+          if (!persist(ctx, binding, state)) return;
         }
-        if (ctx.sessionManager.getSessionId() !== session || cache !== selected)
-          return;
         lastMessages = messages;
         const guide: Message = {
           role: "custom",
           customType: GUIDE_TYPE,
           display: false,
           timestamp: 0,
-          content: `Songya user: ${selected.config.user}. Agent owner (agentUser): ${selected.config.agentUser ?? "agent"}.\n${GUIDE}\n${selected.instructions}`,
+          content: `Configured Songya stores: ${selected.map((b) => b.config.user).join(", ")}.\n${GUIDE}\n${selected.map((b) => `Store ${b.config.user}:\n${b.instructions}`).join("\n\n")}`,
         };
+        const cost = (message: Message) =>
+          estimateTokens(message as Parameters<typeof estimateTokens>[0]);
+        const active = new Set(pi.getActiveTools());
+        const prompt = {
+          role: "system",
+          content: ctx.getSystemPrompt(),
+          toolsAdded: pi.getAllTools().filter((t) => active.has(t.name)),
+        } as unknown as Message;
+        const window =
+          ctx.model?.contextWindow ?? ctx.getContextUsage?.()?.contextWindow;
+        let budget = window
+          ? window -
+            (pi.getSettings().compaction?.reserveTokens ??
+              DEFAULT_COMPACTION_SETTINGS.reserveTokens) -
+            messages.reduce((n, m) => n + cost(m), cost(prompt) + cost(guide))
+          : Infinity;
         let projected = messages;
-        if (selected.config.recallEnabled) {
-          const window =
-            ctx.model?.contextWindow ?? ctx.getContextUsage?.()?.contextWindow;
-          let visible = state;
-          if (window) {
-            const cost = (message: Message) =>
-              estimateTokens(message as Parameters<typeof estimateTokens>[0]);
-            const active = new Set(pi.getActiveTools());
-            const tools = pi
-              .getAllTools()
-              .filter((tool) => active.has(tool.name));
-            const prompt = {
-              role: "system",
-              content: ctx.getSystemPrompt(),
-              toolsAdded: tools,
-            } as unknown as Message;
-            const base = messages.reduce(
-              (sum, message) => sum + cost(message),
-              cost(prompt) + cost(guide),
-            );
-            const reserve =
-              pi.getSettings().compaction?.reserveTokens ??
-              DEFAULT_COMPACTION_SETTINGS.reserveTokens;
-            visible = fitRecall(state, window - reserve - base, cost).state;
+        // Fit all stores against one shared budget, retaining each store's own IDs.
+        for (const binding of selected)
+          if (binding.config.recallEnabled) {
+            const visible = fitRecall(
+              binding.state,
+              budget,
+              cost,
+              binding.config.user,
+            ).state;
+            const next = projectRecall(projected, visible, binding.config.user);
+            budget -=
+              next.reduce((n, m) => n + cost(m), 0) -
+              projected.reduce((n, m) => n + cost(m), 0);
+            projected = next;
           }
-          projected = projectRecall(messages, visible);
-        }
         return {
           messages: [guide, ...projected] as unknown as typeof event.messages,
         };
@@ -355,93 +356,101 @@ export function createExtension(deps: Dependencies = {}) {
     });
     pi.on("agent_end", async (event, ctx) => {
       try {
-        const selected = await current(ctx);
-        if (!selected.config.recallEnabled || ctx.signal?.aborted) return;
-        const byId = new Map(
-          lastMessages.map((message) => [anchorOf(message), message]),
-        );
+        if (ctx.signal?.aborted) return;
+        const byId = new Map(lastMessages.map((m) => [anchorOf(m), m]));
         for (const message of cleanMessages(
           event.messages as unknown as Message[],
         ))
           byId.set(anchorOf(message), message);
         const messages = [...byId.values()];
-        const state = beforeRecall(selected.state, messages, messages);
-        const request = recallRequest(selected.config, messages, state);
-        if (!request.eligible.length) return;
         stopWarm();
-        const controller = new AbortController();
-        const key = digest([selected.scope, request.args]);
-        const promise = client
-          .call(
-            selected.config,
-            "automatic_recall",
-            request.args,
-            undefined,
-            controller.signal,
-          )
-          .catch((error) => ({ error: (error as Error).message }));
-        warming = { key, promise, controller };
+        for (const binding of await current(ctx)) {
+          if (!binding.config.recallEnabled) continue;
+          const state = beforeRecall(binding.state, messages, messages),
+            request = recallRequest(binding.config, messages, state);
+          if (!request.eligible.length) continue;
+          const controller = new AbortController(),
+            key = digest([binding.scope, request.args]);
+          const promise = client
+            .call(
+              binding.config,
+              "automatic_recall",
+              request.args,
+              undefined,
+              controller.signal,
+            )
+            .catch((error) => ({ error: (error as Error).message }));
+          warming.set(binding.config.user, { key, promise, controller });
+        }
       } catch (error) {
         warn(ctx, error);
       }
     });
     pi.registerCommand("songya", {
       description:
-        "Songya status, on/off, user <id>, reset, recover, preview <text>, or admin",
+        "Songya status, on/off, reset, recover, preview <text>, or admin",
       handler: async (input, ctx) => {
         try {
           let selected = await current(ctx);
           const [command, ...rest] = input.trim().split(/\s+/);
-          if (
-            command === "on" ||
-            command === "off" ||
-            command === "reset" ||
-            command === "user"
-          ) {
-            if (command === "user" && (!rest[0] || rest[0] === "all"))
-              throw new Error("Use /songya user <one-user-id>.");
+          if (["on", "off", "reset"].includes(command)) {
             pi.appendEntry(
               PREFERENCES,
               command === "reset"
                 ? { reset: true }
-                : command === "user"
-                  ? { user: rest[0] }
-                  : { recallEnabled: command === "on" },
+                : { recallEnabled: command === "on" },
             );
             stopWarm();
             selected = await current(ctx);
           } else if (command === "recover") {
-            recovering = undefined;
-            await recover(ctx, selected);
-            const reply = await client.call(
-              selected.config,
-              "memory_maintenance",
-              { action: "recover" },
-            );
-            if (reply.error) throw new Error(reply.error);
+            recovered.clear();
+            for (const binding of selected) {
+              await recover(ctx, binding);
+              const reply = await client.call(
+                binding.config,
+                "memory_maintenance",
+                { action: "recover" },
+              );
+              if (reply.error) throw Error(reply.error);
+            }
           } else if (command === "preview") {
             const text = rest.join(" ");
-            if (!text) throw new Error("Use /songya preview <message text>.");
-            const reply = await client.call(
-              selected.config,
-              "automatic_recall",
-              {
-                messages: [text],
-                owners: recallOwners(selected.config),
-              },
-            );
-            if (reply.error) throw new Error(reply.error);
-            ctx.ui.notify(JSON.stringify(reply.data, null, 2), "info");
+            if (!text) throw Error("Use /songya preview <message text>.");
+            for (const binding of selected) {
+              const reply = await client.call(
+                binding.config,
+                "automatic_recall",
+                { messages: [text] },
+              );
+              if (reply.error) throw Error(reply.error);
+              ctx.ui.notify(
+                JSON.stringify(
+                  { store: binding.config.user, ...reply.data },
+                  null,
+                  2,
+                ),
+                "info",
+              );
+            }
             return;
           } else if (command === "admin") {
-            ctx.ui.notify(selected.config.adminUrl, "info");
+            ctx.ui.notify(
+              [...new Set(selected.map((b) => b.config.adminUrl))].join("\n"),
+              "info",
+            );
             return;
           } else if (command && command !== "status")
-            throw new Error(
-              "Use /songya [status|on|off|user <id>|reset|recover|preview <text>|admin].",
+            throw Error(
+              "Use /songya [status|on|off|reset|recover|preview <text>|admin].",
             );
           ctx.ui.notify(
-            `Songya user: ${selected.config.user}\nStore: ${selected.config.store}\nAutomatic recall: ${selected.config.recallEnabled ? "on" : "off"}\nConfiguration: ${join(ctx.cwd, ".pi", "settings.json")}\nAdministration: ${selected.config.adminUrl}`,
+            selected
+              .map(
+                (b) =>
+                  `Store: ${b.config.user}\nDirectory: ${b.config.store}\nAutomatic recall: ${b.config.recallEnabled ? "on" : "off"}`,
+              )
+              .join("\n\n") +
+              `\nConfiguration: ${join(ctx.cwd, ".pi/settings.json")}`,
             "info",
           );
         } catch (error) {

@@ -1,5 +1,7 @@
 github.com/aristath/songya v0.0.0-20261111134539-f0f64b98c82b h1:6c32NvOmgtd0uvddzBn6SRs8JV7o5BBr+A7kV5GaOPw=
 github.com/aristath/songya v0.0.0-20261111134539-f0f64b98c82b/go.mod h1:vVc2LWTwKCM/NJTlfPWEU6Nj6LWjdhyxHz9rPnKzUW8=
+github.com/aristath/songya v0.0.0-20261118061248-b9b2a9cbf967 h1:Wz1qrTlpnaEwwbqCZuVt6w/U/Z7hQQYVcUEMlt0s/K8=
+github.com/aristath/songya v0.0.0-20261118061248-b9b2a9cbf967/go.mod h1:vVc2LWTwKCM/NJTlfPWEU6Nj6LWjdhyxHz9rPnKzUW8=
 github.com/gofrs/flock v0.13.1 h1:jjREztyBeSKBZYAC+mgc1laB+xsgy4kYMf3FbKF2UBo=
 github.com/gofrs/flock v0.13.1/go.mod h1:sf4BFiHwnvgxa25DlQoDqXQnwRMEOwqxRq37P6MzzmE=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=

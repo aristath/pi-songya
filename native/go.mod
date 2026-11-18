@@ -2,7 +2,7 @@ module pi-songya/native
 
 go 1.27.3
 
-require github.com/aristath/songya v0.0.0-20261111134539-f0f64b98c82b
+require github.com/aristath/songya v0.0.0-20261118061248-b9b2a9cbf967
 
 require (
 	github.com/gofrs/flock v0.13.1 // indirect

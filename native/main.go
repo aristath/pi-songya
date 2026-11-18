@@ -55,7 +55,7 @@ func main() {
 }
 func handle(ctx context.Context, q request) response {
 	if q.Store == "" || q.User == "" || q.User == "all" {
-		return response{Error: "Configure a Songya store and one user in songya.json"}
+		return response{Error: "Configure a Songya store path and name in Pi settings"}
 	}
 	// Provisioning is an application operation, not a model tool. Reads below
 	// continue to reject a missing existing store rather than replacing it.
@@ -81,7 +81,6 @@ func handle(ctx context.Context, q request) response {
 		q.Config = filepath.Join(q.Store, "config.json")
 	}
 	store.UseConfiguration(q.Config)
-	ctx = songya.WithTypeUser(ctx, q.User)
 	if q.Operation != "read_memory" && strings.HasPrefix(q.Operation, "save_") && strings.Contains(string(q.Args), `"original_accounts"`) {
 		return response{Data: map[string]any{"status": "not_accepted"}, Error: "Original accounts cannot be edited through generated record fields."}
 	}
@@ -166,10 +165,10 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 	number := func(key string) int { var v int; _ = json.Unmarshal(args[key], &v); return v }
 	switch q.Operation {
 	case "type_configuration":
-		cfg, err := s.TypeConfiguration(ctx, q.User)
-		return map[string]any{"user": cfg.User, "my_entity": cfg.MyEntity, "kinds": cfg.Kinds, "version": cfg.Version, "diagnostics": cfg.Diagnostics, "instructions": songya.TypeInstructions(cfg)}, nil, err
+		cfg, err := s.TypeConfiguration(ctx)
+		return map[string]any{"my_entity": cfg.MyEntity, "kinds": cfg.Kinds, "version": cfg.Version, "diagnostics": cfg.Diagnostics, "instructions": songya.TypeInstructions(cfg)}, nil, err
 	case "prepare_memory":
-		result, err := s.Prepare(ctx, text("text"), text("user"), defaultSize(number("limit"), 8))
+		result, err := s.Prepare(ctx, text("text"), defaultSize(number("limit"), 8))
 		return result, nil, err
 	case "search_memory":
 		in, err := decode[songya.Query](raw)
@@ -381,8 +380,8 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 		}
 	case "import_memories":
 		var in struct {
-			Action, Root, Path, User string
-			Parts                    []struct {
+			Action, Root, Path string
+			Parts              []struct {
 				Start, End *int
 				Kind       songya.Destination
 				Metadata   map[string]any
@@ -410,7 +409,7 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 			}
 			parts = append(parts, songya.ImportPart{Start: *p.Start, End: *p.End, Kind: p.Kind, Fields: p.Metadata})
 		}
-		r, err := s.Import(ctx, root, songya.ImportRequest{User: in.User, Path: in.Path, Parts: parts})
+		r, err := s.Import(ctx, root, songya.ImportRequest{Path: in.Path, Parts: parts})
 		return r, nil, err
 	case "memory_maintenance":
 		switch text("action") {

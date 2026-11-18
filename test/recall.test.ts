@@ -64,23 +64,11 @@ test("only user text and visible assistant text become recall queries", () => {
     emptyState("scope"),
   );
   assert.deepEqual(request.args.messages, ["answer", "question"]);
-  assert.deepEqual(request.args.owners, ["user-1", "agent"]);
-  assert.deepEqual(
-    recallRequest({ ...config, user: "agent" }, [], emptyState("scope")).args
-      .owners,
-    ["agent"],
+  assert.equal(Object.hasOwn(request.args, "owners"), false);
+  assert.notEqual(
+    scopeOf({ ...config, store: "/another-store" }, "session"),
+    scopeOf(config, "session"),
   );
-  const custom = { ...config, agentUser: "assistant" };
-  assert.deepEqual(recallRequest(custom, [], emptyState("scope")).args.owners, [
-    "user-1",
-    "assistant",
-  ]);
-  assert.deepEqual(
-    recallRequest({ ...custom, user: "assistant" }, [], emptyState("scope"))
-      .args.owners,
-    ["assistant"],
-  );
-  assert.notEqual(scopeOf(custom, "session"), scopeOf(config, "session"));
 });
 test("corrections append after the latest tool result and only a new human message cleans earlier versions", () => {
   const question = user("original");

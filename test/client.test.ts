@@ -16,7 +16,6 @@ import {
   finished,
   loadConfig,
   normalizeArguments,
-  scopedArguments,
   type Config,
   type Request,
 } from "../src/client.ts";
@@ -33,19 +32,21 @@ test("configuration and forgiving number normalization do not alter source wordi
   const dir = await temporary();
   await writeFile(
     join(dir, "settings.json"),
-    JSON.stringify({ songya: {
-      store: "./memory",
-      user: "user-1",
-      agentUser: " assistant ",
-      roots: { letters: "./letters" },
-      recallEnabled: false,
-    } }),
+    JSON.stringify({
+      songya: [
+        {
+          store: "./memory",
+          user: "user-1",
+          roots: { letters: "./letters" },
+          recallEnabled: false,
+        },
+      ],
+    }),
   );
-  const loaded = await loadConfig(dir, dir);
+  const [loaded] = await loadConfig(dir, dir);
   assert.equal(loaded.store, join(dir, "memory"));
   assert.equal(loaded.roots.letters, join(dir, "letters"));
   assert.equal(loaded.recallEnabled, false);
-  assert.equal(loaded.agentUser, "assistant");
   assert.deepEqual(
     normalizeArguments({
       offset: "3",
@@ -59,25 +60,6 @@ test("configuration and forgiving number normalization do not alter source wordi
       text: "  exact words  ",
       parts: [{ start: 1, end: 10 }],
     },
-  );
-});
-test("queries and new records default to selected user while edits preserve ownership", () => {
-  assert.equal(scopedArguments("search_memory", {}, "user-1").user, "user-1");
-  assert.equal(
-    scopedArguments("save_memory", { text: "fact" }, "user-1").user,
-    "user-1",
-  );
-  assert.equal(
-    scopedArguments("save_story", { id: "s_existing" }, "user-1").user,
-    undefined,
-  );
-  assert.equal(
-    scopedArguments("save_memory", { id: "m_existing" }, "user-1").user,
-    undefined,
-  );
-  assert.equal(
-    scopedArguments("search_memory", { user: "all" }, "user-1").user,
-    "all",
   );
 });
 test("an uncertain write remains private and retries its exact original request", async () => {

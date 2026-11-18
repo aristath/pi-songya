@@ -1,7 +1,7 @@
 # pi-songya
 
 A standalone Pi extension for Songya: direct memory tools, automatic recall,
-per-user classifications, and durable writes. It runs within Pi's existing agent.
+isolated stores and classifications, and durable writes. It runs within Pi's existing agent.
 The Go helper calls the Songya library directly; no MCP connection or running
 Songya web service is required.
 
@@ -19,20 +19,19 @@ Add `songya` to the project’s `.pi/settings.json` (or Pi’s global `settings.
 
 ```json
 {
-  "songya": {
-    "store": "/absolute/path/to/songya/store",
-    "user": "user-1",
-    "agentUser": "agent",
-    "recallEnabled": true,
-    "adminUrl": "http://127.0.0.1:8664"
-  }
+  "songya": [
+    {"store":"/absolute/path/to/person/store","user":"person","recallEnabled":true,"adminUrl":"http://127.0.0.1:8664"},
+    {"store":"/absolute/path/to/agent/store","user":"agent","recallEnabled":true,"adminUrl":"http://127.0.0.1:8664"}
+  ]
 }
 ```
 
-The store must already exist. `user` selects the record owner for queries and new
-records. Optional `agentUser` identifies the agent's record owner and defaults to
-`agent`. Set it to an existing owner ID to use that owner's records without
-renaming or moving data. Configuration is local and is not included in this package.
+Each entry is one accessible store. `user` names that store for the tools; it is
+not record metadata. Every tool call requires `store:"person"` or `store:"agent"`.
+Only configured directories are accessible. Each has independent records,
+entities, topics, stories, attachments, types, indexes and recall state.
+There are no shared identities or links across stores. Songya's admin UI has a
+separate configuration; it does not read Pi settings.
 
 Optional `config` selects Songya's embedding and retrieval settings; otherwise
 Songya uses `<store>/config.json`. Optional `roots` maps import names to permitted
@@ -47,7 +46,7 @@ maintenance use Songya's configured embedding provider during actual use.
 
 ## Direct tools
 
-- `type_configuration`: selected user's classifications and guidance.
+- `type_configuration`: selected store's classifications and guidance.
 - `prepare_memory`, `search_memory`, `read_memory`, `recall_memory`:
   match, search, inspect, and retrieve records.
 - `save_memory`, `save_entity`, `save_topic`, `save_story`: create and edit records.
@@ -62,17 +61,12 @@ wording. Omitted relationships are preserved; supplied relationships replace the
 list. Check `status`, `outcome`, and `changed_fields`: `unchanged` is not a change,
 and `pending` is not confirmation that a write completed.
 
-Queries and new memories/stories default to the selected user. Updates preserve
-ownership unless explicitly changed. Classification belongs to the selected
-user independently of record ownership. Explicit cross-owner queries remain
-possible. User selection is not authentication; host permissions and Pi control access.
-
 ## Automatic recall
 
 Before model requests, the extension sends user text and visible assistant text
 to Songya. Tool output, hidden thinking, and injected context are excluded. It
-recalls records owned by the selected user and `agentUser`, without duplicating
-an owner. Shared entities and topics follow Songya's owner policy. Ranking,
+queries each enabled store independently and labels injected evidence with its
+store name. Ranking,
 counts, thresholds, and linked context are configured in Songya.
 
 Recollections are hidden context messages placed beside their source messages.
@@ -100,9 +94,8 @@ while other work continues. Songya owns accepted receipts and recovery journals.
 
 ## Commands
 
-- `/songya`: show the selected user, store, configuration, and recall status.
+- `/songya`: show configured stores, directories, configuration, and recall status.
 - `/songya on` or `/songya off`: session-specific recall preference.
-- `/songya user user-1`: session-specific user binding, persisted in Pi's branch.
 - `/songya reset`: follow configuration defaults again.
 - `/songya recover`: retry retained requests and recover Songya operations.
 - `/songya preview <text>`: inspect recall without starting an LLM turn.
