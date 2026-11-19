@@ -71,7 +71,7 @@ func handle(ctx context.Context, q request) response {
 	}
 	// Reads must not create a missing source. Writers use Songya's normal
 	// initialization/recovery once OpenExisting has established that it exists.
-	if strings.HasPrefix(q.Operation, "save_") || q.Operation == "organize_memory" || q.Operation == "upload_file" || q.Operation == "attach_file" || q.Operation == "replace_file" || q.Operation == "remove_file" || q.Operation == "import_memories" || q.Operation == "memory_maintenance" {
+	if strings.HasPrefix(q.Operation, "save_") || q.Operation == "delete_memory" || q.Operation == "organize_memory" || q.Operation == "upload_file" || q.Operation == "attach_file" || q.Operation == "replace_file" || q.Operation == "remove_file" || q.Operation == "import_memories" || q.Operation == "memory_maintenance" {
 		store, err = songya.Open(q.Store)
 		if err != nil {
 			return response{Error: err.Error()}
@@ -214,6 +214,7 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 	case "read_memory":
 		var bytes []byte
 		var err error
+		revision := ""
 		id := text("id")
 		view := text("view")
 		switch {
@@ -233,6 +234,7 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 			var doc *songya.Document
 			doc, err = s.Read(id)
 			if err == nil {
+				revision = doc.Revision
 				if view == "source" {
 					bytes = doc.OriginalSource()
 					if bytes == nil {
@@ -248,7 +250,27 @@ func dispatch(ctx context.Context, s *songya.Store, q request) (any, []image, er
 		}
 		out := page(bytes, number("offset"), number("limit"))
 		out["id"], out["view"] = id, view
+		if revision != "" {
+			out["revision"] = revision
+		}
 		return out, nil, nil
+	case "delete_memory":
+		id := text("id")
+		out := map[string]any{"id": id}
+		err := s.Delete(ctx, id, text("revision"))
+		var blocked *songya.DeleteBlocked
+		if errors.As(err, &blocked) {
+			ids := []string{}
+			for _, record := range blocked.Records {
+				ids = append(ids, record.ID)
+			}
+			out["status"], out["blocked_by"], out["diagnostics"] = "not_accepted", ids, blocked.Diagnostics
+		} else if errors.Is(err, songya.ErrConflict) {
+			out["status"] = "not_accepted"
+		} else if err == nil {
+			out["status"], out["outcome"] = "committed", "deleted"
+		}
+		return out, nil, err
 	case "save_memory":
 		in, err := decode[songya.MemoryInput](raw)
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	stdimage "image"
 	"image/png"
 	"net/http"
@@ -71,6 +72,39 @@ func (f fixture) memory(key, title, body, user string) string {
 		f.t.Fatal(r)
 	}
 	return r["id"].(string)
+}
+func TestDeleteMemoryReturnsRevisionRejectsStaleAndLinkedRecordsAndRetries(t *testing.T) {
+	f := newFixture(t)
+	id := f.memory("target", "Target", "Original", "user-1")
+	read := data(t, f.call("read_memory", map[string]any{"id": id}, ""))
+	old := read["revision"]
+	data(t, f.call("save_memory", map[string]any{"id": id, "append": "More words"}, "change"))
+	if r := f.call("delete_memory", map[string]any{"id": id, "revision": old}, "delete-stale"); r.Error == "" || r.Data.(map[string]any)["status"] != "not_accepted" {
+		t.Fatal("stale delete accepted", r)
+	}
+	read = data(t, f.call("read_memory", map[string]any{"id": id}, ""))
+	linked := data(t, f.call("save_memory", map[string]any{"title": "Linked", "text": "Related account", "relations": []any{map[string]any{"type": "related_to", "target": id}}}, "linked"))["id"].(string)
+	args := map[string]any{"id": id, "revision": read["revision"]}
+	r := f.call("delete_memory", args, "delete-linked")
+	if r.Error == "" || len(r.Data.(map[string]any)["blocked_by"].([]string)) != 1 || r.Data.(map[string]any)["blocked_by"].([]string)[0] != linked {
+		t.Fatal("incoming link missing", r)
+	}
+	doc, err := f.store.Read(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Delete(context.Background(), linked, doc.Revision); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		deleted := data(t, f.call("delete_memory", args, "delete-target"))
+		if deleted["status"] != "committed" || deleted["outcome"] != "deleted" {
+			t.Fatal(deleted)
+		}
+	}
+	if _, err := f.store.Read(id); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("record survived deletion", err)
+	}
 }
 func TestSaveRetryAndPartialEditPreserveOriginalOwner(t *testing.T) {
 	f := newFixture(t)

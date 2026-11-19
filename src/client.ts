@@ -128,6 +128,7 @@ export function mutates(operation: string, args: Record<string, unknown>) {
   return (
     operation.startsWith("save_") ||
     [
+      "delete_memory",
       "organize_memory",
       "upload_file",
       "attach_file",

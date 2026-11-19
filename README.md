@@ -72,6 +72,9 @@ maintenance use Songya's configured embedding provider during actual use.
 - `prepare_memory`, `search_memory`, `read_memory`, `recall_memory`:
   match, search, inspect, and retrieve records.
 - `save_memory`, `save_entity`, `save_topic`, `save_story`: create and edit records.
+- `delete_memory`: delete one record and its attachments. Read it first and send
+  its `id`, `revision`, and `store`. Incoming links block deletion; `blocked_by`
+  lists their source IDs. Links are never removed automatically.
 - `explore_memory`, `memory_timeline`, `compose_story`: connections and chronology.
 - `list_files`, `read_file`, `upload_file`, `attach_file`, `replace_file`,
   `remove_file`, `file_status`: attachments and image/text previews.

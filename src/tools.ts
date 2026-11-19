@@ -110,6 +110,11 @@ export const SPECS: Spec[] = [
     },
   ),
   spec(
+    "delete_memory",
+    "Permanently delete one record and its attachments only when requested. Read it first and send its id and revision from read_memory. Incoming links block deletion and are reported in blocked_by; they are not removed automatically.",
+    { id: Type.String(), revision: Type.String({ description: "Current revision returned by read_memory" }) },
+  ),
+  spec(
     "recall_memory",
     "Find a person or subject by name or ID and read connected memories and stories.",
     { text: Type.String(), ...pages },

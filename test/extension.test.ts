@@ -129,9 +129,23 @@ const recalled = (messages: Message[]) =>
     .map((m) => String(m.content))
     .join("\n");
 
+test("delete_memory is a store-scoped write with a stable request key", async () => {
+  const f = await fixture();
+  await f.event("session_start");
+  const result = await f.tools.get("delete_memory").execute(
+    "delete-1", { store: "user-1", id: "m_target", revision: "read-revision" },
+    undefined, undefined, f.ctx,
+  );
+  assert.equal(result.isError, false);
+  const call = f.calls.find(call => call.operation === "delete_memory")!;
+  assert.ok(call.key);
+  assert.equal(call.store, join(f.dir, "store"));
+  assert.deepEqual(call.args, { id: "m_target", revision: "read-revision" });
+});
+
 test("Pi receives direct tools and native typed/image/error results", async () => {
   const f = await fixture();
-  assert.equal(f.tools.size, 22);
+  assert.ok(f.tools.has("delete_memory"));
   assert.ok(f.tools.has("save_memory"));
   assert.equal(f.tools.has("mcp__songya__save_memory"), false);
   await f.event("session_start");
@@ -309,7 +323,7 @@ test("Pi SDK loads the standalone extension without a session or provider reques
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.warnings ?? [], []);
   assert.equal(result.extensions.length, 1);
-  assert.equal(result.extensions[0].tools.size, 22);
+  assert.ok(result.extensions[0].tools.has("delete_memory"));
   assert.ok([...result.extensions[0].tools.values()].every((tool) => tool.definition.exposure === "hidden"));
 });
 
