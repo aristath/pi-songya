@@ -56,12 +56,8 @@ export async function loadConfig(
   cwd = process.cwd(),
   settings?: Record<string, any>,
 ): Promise<Config[]> {
-  const raw = (
-    settings ??
-    (SettingsManager.create(cwd, agentDir, {
-      projectTrusted: true,
-    }).getSettings() as any)
-  ).songya;
+  const effective = settings ?? SettingsManager.create(cwd, agentDir, { projectTrusted: true }).getSettings() as Record<string, any>;
+  const raw = effective.songya;
   if (!Array.isArray(raw) || !raw.length)
     throw new Error(
       `${join(cwd, ".pi/settings.json")} needs a songya array of stores.`,
@@ -94,7 +90,7 @@ export async function loadConfig(
         typeof entry.config === "string"
           ? expand(entry.config, cwd)
           : undefined,
-      recallEnabled: entry.recallEnabled !== false,
+      recallEnabled: entry.recallEnabled !== false && effective.songyaRecallEnabled !== false,
       exposeTools: entry.exposeTools !== false,
       adminUrl:
         typeof entry.adminUrl === "string"

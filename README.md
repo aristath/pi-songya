@@ -139,3 +139,5 @@ npm pack --dry-run
 
 Tests use temporary stores, generic fixtures, and controlled providers. They do
 not read deployment data, call live inference, or start active Pi sessions.
+
+Set `songyaRecallEnabled: false` in Pi settings to disable automatic recall across the configured stores. Per-store `recallEnabled` remains supported; explicit tool access is controlled separately by `exposeTools`.

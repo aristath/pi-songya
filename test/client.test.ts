@@ -220,3 +220,12 @@ test("a queue cleanup failure preserves an already committed result", async (t) 
   );
   assert.equal((await readdir(client.pendingDir(config))).length, 1);
 });
+
+test('the global automatic-recall preference leaves explicit tools and store isolation intact', async () => {
+  const settings = { songyaRecallEnabled: false, songya: [{ store: '/controlled/first', user: 'first' }, { store: '/controlled/agent', user: 'agent', exposeTools: false }] };
+  const stores = await loadConfig('/controlled/pi', '/controlled', settings);
+  assert.equal(stores.every(store => store.recallEnabled === false), true);
+  assert.equal(stores[0].exposeTools, true);
+  assert.equal(stores[1].exposeTools, false);
+  assert.deepEqual(stores.map(store => store.user), ['first', 'agent']);
+});
